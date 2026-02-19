@@ -1,4 +1,4 @@
-# Slide Library
+# Slide Library (vibe coded experiment)
 
 Lightweight local app for course slides:
 - Drop image files into a designated folder
@@ -10,10 +10,10 @@ Lightweight local app for course slides:
 ## Folder-based workflow
 
 Your designated image folder is:
-- `/Users/grunskm/slide_archive/library`
+- `./slide_archive/library`
 
 Workflow:
-1. Drag/copy image files into `/Users/grunskm/slide_archive/library` (subfolders are supported).
+1. Drag/copy image files into `./slide_archive/library` (subfolders are supported).
 2. Start the app server.
 3. The library is loaded automatically when the app opens.
 4. Use `Search/Filters` in the header to show/hide the left search panel when needed.
@@ -30,20 +30,17 @@ Workflow:
 ## Run
 
 ```bash
-cd /Users/grunskm/slide_archive
+cd ./slide_archive
 npm install
 npm start
 ```
 
-Then open:
-- [http://127.0.0.1:5173](http://127.0.0.1:5173)
-
 ## Data storage
 
-- Image files stay on disk in `/Users/grunskm/slide_archive/library`.
-- Metadata and all slideshow data are stored in `/Users/grunskm/slide_archive/data/archive.json`.
-- Cached preview thumbnails are generated in `/Users/grunskm/slide_archive/data/thumbs` as new images are detected.
-- Purged files are moved to `/Users/grunskm/slide_archive/purged`, with purge metadata logged in `/Users/grunskm/slide_archive/data/purged_archive.json`.
+- Image files stay on disk in `./slide_archive/library`.
+- Metadata and all slideshow data are stored in `./slide_archive/data/archive.json`.
+- Cached preview thumbnails are generated in `./slide_archive/data/thumbs` as new images are detected.
+- Purged files are moved to `./slide_archive/purged`, with purge metadata logged in `./slide_archive/data/purged_archive.json`.
 
 ## Notes
 

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Slide Library</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-layout" id="app-root">
+      <section class="content">
+        <div class="split" id="split">
+          <section class="panel" id="library-panel">
+            <div class="panel-header">
+              <div class="library-title">
+                <button id="btn-toggle-sidebar" class="title-caret" aria-label="Toggle filters" aria-expanded="false">▸</button>
+                <h2>Slide Library</h2>
+              </div>
+              <div class="header-actions">
+                <label class="size-control">
+                  <span class="muted">Image Size</span>
+                  <input id="archive-size" type="range" min="100" max="170" step="5" value="170" />
+                  <span id="archive-size-value" class="muted">170</span>
+                </label>
+                <button id="btn-import-url" class="btn-secondary import-url-btn" title="Import from URL" aria-label="Import from URL">+</button>
+              </div>
+            </div>
+            <div class="archive-layout">
+              <aside class="archive-filters">
+                <label class="field">
+                  <span>Search</span>
+                  <input id="search" type="text" placeholder="title, artist, tag, filename..." />
+                </label>
+
+                <label class="field">
+                  <select id="filter-year">
+                    <option value="">Year</option>
+                    <option value="1700-1799">1700-1800</option>
+                    <option value="1800-1899">1800-1900</option>
+                    <option value="1900-1999">1900-2000</option>
+                    <option value="2000-now">2000-Now</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <select id="filter-artist">
+                    <option value="">Artist</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <select id="filter-medium">
+                    <option value="">Medium</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <select id="filter-tag">
+                    <option value="">Tag</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <select id="sort-by">
+                    <option value="title">Sort: Title</option>
+                    <option value="artist">Artist</option>
+                    <option value="year">Year</option>
+                    <option value="tags">Tag</option>
+                    <option value="medium">Medium</option>
+                    <option value="sourceName">Filename</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <select id="sort-dir">
+                    <option value="asc">Direction: Asc</option>
+                    <option value="desc">Descending</option>
+                  </select>
+                </label>
+
+                <button id="clear-filters" class="btn-secondary">Clear Filters</button>
+              </aside>
+
+              <div class="archive-grid-wrap">
+                <div id="archive-grid" class="archive-grid"></div>
+              </div>
+            </div>
+          </section>
+
+          <div id="split-handle" class="split-handle" title="Drag to resize panels" aria-label="Resize panels" role="separator"></div>
+
+          <section class="panel slideshow-panel">
+            <div class="panel-header">
+              <select id="slideshow-select" class="slideshow-title-select" aria-label="Select slideshow"></select>
+              <div class="header-actions slideshow-actions">
+                <select id="slideshow-action-select" class="btn-secondary" aria-label="Slideshow actions">
+                  <option value="">Actions</option>
+                  <option value="new">New</option>
+                  <option value="rename">Rename</option>
+                  <option value="delete">Delete</option>
+                </select>
+              </div>
+            </div>
+            <ol id="slides-list" class="slides-list"></ol>
+            <div class="slideshow-footer">
+              <button id="btn-preview" class="btn-secondary">Preview</button>
+              <button id="btn-pdf">Export PDF</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="image-dialog" class="editor-dialog">
+      <div class="editor-modal">
+        <section class="editor-preview-pane">
+          <div class="editor-slide-preview">
+            <div class="editor-slide-frame">
+              <div class="editor-slide-image-wrap">
+                <img id="editor-image" alt="" />
+              </div>
+              <div id="editor-preview-title" class="editor-slide-title"></div>
+              <div id="editor-preview-details" class="editor-slide-details"></div>
+            </div>
+          </div>
+        </section>
+
+        <form method="dialog" id="image-form" class="editor-form">
+          <input id="editor-in-slideshow" class="editor-corner-check" type="checkbox" title="In current slideshow" aria-label="In current slideshow" />
+          <h3 id="dialog-title"></h3>
+          <input id="image-id" type="hidden" />
+
+          <label class="field">
+            <span>Title Caption</span>
+            <input id="title" list="title-suggestions" />
+          </label>
+
+          <div class="editor-grid-two">
+            <label class="field">
+              <span>Artist</span>
+              <input id="artist" list="artist-suggestions" />
+            </label>
+
+            <label class="field">
+              <span>Year</span>
+              <input id="year" list="year-suggestions" />
+            </label>
+
+            <label class="field">
+              <span>Medium</span>
+              <input id="medium" list="medium-suggestions" />
+            </label>
+
+            <label class="field">
+              <span>Size (optional)</span>
+              <input id="size" list="size-suggestions" placeholder="e.g. 73.7 x 92.1 cm" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Tags</span>
+            <div id="editor-tags" class="editor-tags"></div>
+            <input id="tags" list="tag-suggestions-list" placeholder="Type tag, press Enter" />
+          </label>
+          <div id="tag-suggestions" class="tag-suggestions"></div>
+
+        </form>
+      </div>
+      <div class="editor-nav-outer" aria-hidden="false">
+        <button type="button" id="btn-prev" class="editor-nav-btn btn-secondary" aria-label="Previous image">&larr;</button>
+        <button type="button" id="btn-next" class="editor-nav-btn" aria-label="Next image">&rarr;</button>
+      </div>
+      <div class="editor-purge-wrap">
+        <button type="button" id="btn-purge-item" class="editor-purge-btn btn-secondary">Purge From Archive</button>
+      </div>
+    </dialog>
+
+    <dialog id="import-dialog" class="import-dialog">
+      <form method="dialog" id="import-form" class="import-modal">
+        <h3>Import from URL</h3>
+        <label class="field">
+          <span>Image or page URL</span>
+          <div class="import-url-row">
+            <input id="import-url-input" type="url" placeholder="https://en.wikipedia.org/..." />
+            <button type="button" id="btn-import-load">Load</button>
+          </div>
+        </label>
+
+        <div class="import-preview-panel">
+          <div class="import-preview-wrap">
+            <img id="import-preview-image" alt="" />
+            <p id="import-preview-empty" class="muted">Load a URL to preview image candidates.</p>
+          </div>
+          <p id="import-preview-caption" class="import-preview-caption muted"></p>
+          <div class="import-nav">
+            <button type="button" id="btn-import-prev" class="btn-secondary" aria-label="Previous candidate">&larr;</button>
+            <span id="import-counter" class="muted">0 / 0</span>
+            <button type="button" id="btn-import-next" class="btn-secondary" aria-label="Next candidate">&rarr;</button>
+          </div>
+        </div>
+
+        <menu class="dialog-actions">
+          <button type="button" id="btn-import-cancel" class="btn-secondary">Cancel</button>
+          <button type="button" id="btn-import-confirm">Import Selected</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <datalist id="title-suggestions"></datalist>
+    <datalist id="artist-suggestions"></datalist>
+    <datalist id="year-suggestions"></datalist>
+    <datalist id="medium-suggestions"></datalist>
+    <datalist id="size-suggestions"></datalist>
+    <datalist id="tag-suggestions-list"></datalist>
+
+    <script src="script.js"></script>
+  </body>
+</html>

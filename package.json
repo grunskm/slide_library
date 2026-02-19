@@ -1,0 +1,11 @@
+{
+  "name": "slide-library",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

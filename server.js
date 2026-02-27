@@ -8,12 +8,12 @@ const { promisify } = require("util");
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT || 5173);
 const ROOT = __dirname;
-const LIBRARY_DIR = path.join(ROOT, "library");
-const PURGED_DIR = path.join(ROOT, "purged");
 const DATA_DIR = path.join(ROOT, "data");
+const PURGED_DIR = path.join(DATA_DIR, "purged");
+const FIELD_BUNDLE_DIR = path.join(DATA_DIR, "field_bundle_archive");
 const DB_FILE = path.join(DATA_DIR, "archive.json");
 const PURGED_DB_FILE = path.join(DATA_DIR, "purged_archive.json");
-const THUMBS_DIR = path.join(DATA_DIR, "thumbs");
+const SLIDESHOWS_FILE = path.join(DATA_DIR, "slideshows.json");
 const THUMB_MAX_EDGE = 360;
 const execFileAsync = promisify(execFile);
 const thumbnailJobs = new Map();
@@ -25,6 +25,36 @@ const URL_FETCH_HEADERS = {
   "User-Agent": "SlideLibrary/1.0 (+local archive tool)",
   Accept: "text/html,application/xhtml+xml,image/avif,image/webp,image/*,*/*;q=0.8",
 };
+const DEFAULT_ARCHIVE_KEY = "slide_library";
+const ARCHIVES = {
+  slide_library: {
+    key: "slide_library",
+    label: "Slide Library",
+    libraryDir: path.join(DATA_DIR, "library"),
+    dbFile: DB_FILE,
+    thumbsDir: path.join(DATA_DIR, "thumbs", "slide_library"),
+    purgedDir: PURGED_DIR,
+    purgedDbFile: PURGED_DB_FILE,
+  },
+  excursions: {
+    key: "excursions",
+    label: "Excursions",
+    libraryDir: path.join(DATA_DIR, "excursions_library"),
+    dbFile: path.join(DATA_DIR, "excursions_archive.json"),
+    thumbsDir: path.join(DATA_DIR, "thumbs", "excursions"),
+    purgedDir: path.join(DATA_DIR, "excursions_purged"),
+    purgedDbFile: path.join(DATA_DIR, "excursions_purged_archive.json"),
+  },
+};
+
+function parseArchiveKey(value) {
+  const key = String(value || "").trim();
+  return ARCHIVES[key] ? key : DEFAULT_ARCHIVE_KEY;
+}
+
+function getArchiveConfig(key) {
+  return ARCHIVES[parseArchiveKey(key)];
+}
 
 function makeSlideshowId() {
   return `ss_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -33,6 +63,11 @@ function makeSlideshowId() {
 function defaultDb() {
   return {
     metadata: {},
+  };
+}
+
+function defaultSlidesDb() {
+  return {
     slideshows: {
       default: {
         name: "Current Slideshow",
@@ -50,19 +85,28 @@ function defaultPurgedDb() {
 }
 
 async function ensureDirs() {
-  await fs.mkdir(LIBRARY_DIR, { recursive: true });
-  await fs.mkdir(PURGED_DIR, { recursive: true });
   await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.mkdir(THUMBS_DIR, { recursive: true });
-  try {
-    await fs.access(DB_FILE);
-  } catch {
-    await fs.writeFile(DB_FILE, JSON.stringify(defaultDb(), null, 2));
+
+  for (const archive of Object.values(ARCHIVES)) {
+    await fs.mkdir(archive.libraryDir, { recursive: true });
+    await fs.mkdir(archive.purgedDir, { recursive: true });
+    await fs.mkdir(archive.thumbsDir, { recursive: true });
+    try {
+      await fs.access(archive.dbFile);
+    } catch {
+      await fs.writeFile(archive.dbFile, JSON.stringify(defaultDb(), null, 2));
+    }
+    try {
+      await fs.access(archive.purgedDbFile);
+    } catch {
+      await fs.writeFile(archive.purgedDbFile, JSON.stringify(defaultPurgedDb(), null, 2));
+    }
   }
+
   try {
-    await fs.access(PURGED_DB_FILE);
+    await fs.access(SLIDESHOWS_FILE);
   } catch {
-    await fs.writeFile(PURGED_DB_FILE, JSON.stringify(defaultPurgedDb(), null, 2));
+    await fs.writeFile(SLIDESHOWS_FILE, JSON.stringify(defaultSlidesDb(), null, 2));
   }
 }
 
@@ -70,13 +114,14 @@ function thumbNameForRelPath(relPath) {
   return `${fileToId(relPath)}.jpg`;
 }
 
-async function ensureThumbnail(absSourcePath, relPath) {
-  if (thumbnailJobs.has(relPath)) return;
+async function ensureThumbnail(archive, absSourcePath, relPath) {
+  const jobKey = `${archive.key}:${relPath}`;
+  if (thumbnailJobs.has(jobKey)) return;
 
   const job = (async () => {
-    const absThumbPath = path.join(THUMBS_DIR, thumbNameForRelPath(relPath));
+    const absThumbPath = path.join(archive.thumbsDir, thumbNameForRelPath(relPath));
     try {
-      await fs.mkdir(THUMBS_DIR, { recursive: true });
+      await fs.mkdir(archive.thumbsDir, { recursive: true });
       await execFileAsync("sips", [
         "-s",
         "format",
@@ -92,15 +137,15 @@ async function ensureThumbnail(absSourcePath, relPath) {
     }
   })();
 
-  thumbnailJobs.set(relPath, job);
+  thumbnailJobs.set(jobKey, job);
   job.finally(() => {
-    thumbnailJobs.delete(relPath);
+    thumbnailJobs.delete(jobKey);
   });
 }
 
-async function getThumbnailUrl(absSourcePath, relPath, sourceMtimeMs) {
+async function getThumbnailUrl(archive, absSourcePath, relPath, sourceMtimeMs) {
   const thumbName = thumbNameForRelPath(relPath);
-  const absThumbPath = path.join(THUMBS_DIR, thumbName);
+  const absThumbPath = path.join(archive.thumbsDir, thumbName);
 
   let thumbStat = null;
   try {
@@ -111,11 +156,11 @@ async function getThumbnailUrl(absSourcePath, relPath, sourceMtimeMs) {
 
   const thumbFresh = thumbStat && thumbStat.mtimeMs >= sourceMtimeMs;
   if (!thumbFresh) {
-    ensureThumbnail(absSourcePath, relPath);
+    ensureThumbnail(archive, absSourcePath, relPath);
   }
 
   if (!thumbStat) return "";
-  return `/thumbs/${encodeURIComponent(thumbName)}`;
+  return `/thumbs/${archive.key}/${encodeURIComponent(thumbName)}`;
 }
 
 function sendJson(res, status, payload) {
@@ -167,17 +212,17 @@ function normalizePurgedDb(parsed) {
   return { items };
 }
 
-async function readPurgedDb() {
+async function readPurgedDb(archive) {
   try {
-    const raw = await fs.readFile(PURGED_DB_FILE, "utf8");
+    const raw = await fs.readFile(archive.purgedDbFile, "utf8");
     return normalizePurgedDb(JSON.parse(raw));
   } catch {
     return defaultPurgedDb();
   }
 }
 
-async function writePurgedDb(db) {
-  await fs.writeFile(PURGED_DB_FILE, JSON.stringify(db, null, 2));
+async function writePurgedDb(archive, db) {
+  await fs.writeFile(archive.purgedDbFile, JSON.stringify(db, null, 2));
 }
 
 function uniqueRelPathInDir(rootDir, relPath) {
@@ -210,45 +255,187 @@ function normalizeMetadataPayload(raw) {
     artist: String(source.artist || "").trim(),
     year: String(source.year || "").trim(),
     medium: String(source.medium || "").trim(),
+    gallery: String(source.gallery || "").trim(),
     size: String(source.size || "").trim(),
     tags: Array.isArray(source.tags) ? source.tags.map((t) => String(t).trim()).filter(Boolean) : [],
   };
 }
 
-async function purgeItemFromArchiveById(id, metadataOverride) {
+function defaultMetadataRecord() {
+  return {
+    title: "",
+    artist: "",
+    year: "",
+    medium: "",
+    gallery: "",
+    size: "",
+    tags: [],
+  };
+}
+
+function normalizeSlug(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function extractExcursionAndImageParts(stem) {
+  const value = String(stem || "");
+  if (!value.startsWith("FB_")) {
+    return { excursion: "", imagePart: "" };
+  }
+
+  const rest = value.slice(3);
+  const imgMarker = rest.indexOf("_IMG_");
+  if (imgMarker >= 0) {
+    const excursion = rest.slice(0, imgMarker);
+    const imagePart = `IMG_${rest.slice(imgMarker + "_IMG_".length)}`;
+    return { excursion, imagePart };
+  }
+
+  const cut = rest.lastIndexOf("_");
+  if (cut <= 0) {
+    return { excursion: rest, imagePart: "" };
+  }
+
+  return {
+    excursion: rest.slice(0, cut),
+    imagePart: rest.slice(cut + 1),
+  };
+}
+
+function candidateImageIdsForRelPath(relPath) {
+  const rel = String(relPath || "").trim().replaceAll("\\", "/");
+  const filename = path.posix.basename(rel);
+  if (!filename) return [];
+  return [filename, filename.toLowerCase()];
+}
+
+function parseFieldBundleEntries(parsed) {
+  const entries = [];
+  if (!parsed || typeof parsed !== "object") return entries;
+
+  if (Array.isArray(parsed.items)) {
+    for (const item of parsed.items) {
+      if (!item || typeof item !== "object") continue;
+      const rawId = item.id || item.imageId || item.photoId || item.fileId || item.filename || item.fileName || "";
+      const id = String(rawId || "").trim();
+      if (!id) continue;
+      entries.push([id, normalizeMetadataPayload(item)]);
+    }
+    return entries;
+  }
+
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    entries.push([String(key).trim(), normalizeMetadataPayload(value)]);
+  }
+
+  return entries;
+}
+
+async function readFieldBundleCatalog() {
+  const files = await fs.readdir(FIELD_BUNDLE_DIR, { withFileTypes: true }).catch(() => []);
+  const catalog = [];
+
+  for (const entry of files) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.toLowerCase().endsWith(".json")) continue;
+
+    const abs = path.join(FIELD_BUNDLE_DIR, entry.name);
+    try {
+      const raw = await fs.readFile(abs, "utf8");
+      const parsed = JSON.parse(raw);
+      const entries = parseFieldBundleEntries(parsed);
+      if (!entries.length) continue;
+
+      const fileStem = path.basename(entry.name, ".json");
+      const excursionFromName = normalizeSlug(fileStem.replace(/^photo_metadata_/i, ""));
+      const byId = new Map();
+      for (const [id, metadata] of entries) {
+        const key = String(id || "").trim();
+        if (!key) continue;
+        byId.set(key, metadata);
+        byId.set(key.toLowerCase(), metadata);
+      }
+
+      catalog.push({
+        sourceFile: entry.name,
+        excursionSlug: excursionFromName,
+        byId,
+      });
+    } catch {
+      // Ignore unreadable or invalid bundle files.
+    }
+  }
+
+  return catalog;
+}
+
+async function findFieldBundleMetadataForImage(relPath) {
+  const stem = path.basename(relPath, path.extname(relPath));
+  const { excursion } = extractExcursionAndImageParts(stem);
+  const excursionSlug = normalizeSlug(excursion);
+  const candidateIds = candidateImageIdsForRelPath(relPath);
+  if (!candidateIds.length) return null;
+
+  const catalog = await readFieldBundleCatalog();
+  if (!catalog.length) return null;
+
+  if (!excursionSlug) return null;
+  const matchingBundles = catalog.filter((bundle) => bundle.excursionSlug === excursionSlug);
+  if (!matchingBundles.length) return null;
+
+  for (const bundle of matchingBundles) {
+    for (const candidateId of candidateIds) {
+      const hit = bundle.byId.get(candidateId);
+      if (hit) return hit;
+    }
+  }
+
+  return null;
+}
+
+async function purgeItemFromArchiveById(archive, id, metadataOverride) {
   const relPath = idToFile(id);
-  const absSource = safeJoin(LIBRARY_DIR, relPath);
+  const absSource = safeJoin(archive.libraryDir, relPath);
   if (!relPath || !absSource || !fss.existsSync(absSource)) {
     throw new Error("Item not found");
   }
 
-  const purgedRelPath = uniqueRelPathInDir(PURGED_DIR, relPath);
-  const absDest = safeJoin(PURGED_DIR, purgedRelPath);
+  const purgedRelPath = uniqueRelPathInDir(archive.purgedDir, relPath);
+  const absDest = safeJoin(archive.purgedDir, purgedRelPath);
   if (!absDest) {
     throw new Error("Could not resolve purge destination");
   }
   await fs.mkdir(path.dirname(absDest), { recursive: true });
   await moveFileSafely(absSource, absDest);
 
-  const db = await readDb();
+  const db = await readDb(archive);
   const knownMeta = db.metadata[id] || {};
   const normalizedMeta = metadataOverride
     ? normalizeMetadataPayload(metadataOverride)
     : normalizeMetadataPayload(knownMeta);
 
   delete db.metadata[id];
+  await writeDb(archive, db);
+
   let removedFromSlides = 0;
-  for (const show of Object.values(db.slideshows)) {
+  const slidesDb = await readSlidesDb();
+  for (const show of Object.values(slidesDb.slideshows)) {
     const before = Array.isArray(show.slides) ? show.slides.length : 0;
-    show.slides = Array.isArray(show.slides) ? show.slides.filter((slideId) => slideId !== id) : [];
+    show.slides = Array.isArray(show.slides)
+      ? show.slides.filter((slideRef) => !(slideRef.id === id && slideRef.archive === archive.key))
+      : [];
     removedFromSlides += Math.max(0, before - show.slides.length);
   }
-  await writeDb(db);
+  await writeSlidesDb(slidesDb);
 
-  const thumbPath = path.join(THUMBS_DIR, thumbNameForRelPath(relPath));
+  const thumbPath = path.join(archive.thumbsDir, thumbNameForRelPath(relPath));
   await fs.unlink(thumbPath).catch(() => {});
 
-  const purged = await readPurgedDb();
+  const purged = await readPurgedDb(archive);
   purged.items.push({
     id,
     originalRelPath: relPath,
@@ -256,7 +443,7 @@ async function purgeItemFromArchiveById(id, metadataOverride) {
     purgedAt: new Date().toISOString(),
     metadata: normalizedMeta,
   });
-  await writePurgedDb(purged);
+  await writePurgedDb(archive, purged);
 
   return { purgedRelPath, removedFromSlides };
 }
@@ -441,7 +628,7 @@ function uniqueFilename(dir, candidate) {
   return current;
 }
 
-async function downloadImageFromUrl(urlString) {
+async function downloadImageFromUrl(archive, urlString) {
   const response = await fetch(urlString, { headers: URL_FETCH_HEADERS, redirect: "follow" });
   if (!response.ok) {
     throw new Error(`Could not download image (${response.status}).`);
@@ -458,8 +645,8 @@ async function downloadImageFromUrl(urlString) {
   const baseName = sanitizeName(path.basename(parsed.pathname || "image")) || `image-${Date.now()}`;
   const fallbackExt = extFromType || ".jpg";
   const named = ensureImageExtension(baseName, fallbackExt);
-  const relPath = uniqueFilename(LIBRARY_DIR, named);
-  const absPath = path.join(LIBRARY_DIR, relPath);
+  const relPath = uniqueFilename(archive.libraryDir, named);
+  const absPath = path.join(archive.libraryDir, relPath);
   await fs.writeFile(absPath, bytes);
 
   return { relPath, contentType };
@@ -516,36 +703,26 @@ async function listImportCandidatesFromUrl(sourceUrlValue) {
   };
 }
 
-async function importSelectedImageFromCandidate(payload) {
+async function importSelectedImageFromCandidate(archive, payload) {
   const imageUrl = parseAndValidateHttpUrl(payload?.imageUrl).toString();
   const meta = payload?.metadata && typeof payload.metadata === "object" ? payload.metadata : {};
-  const importResult = await downloadImageFromUrl(imageUrl);
+  const importResult = await downloadImageFromUrl(archive, imageUrl);
   const fallbackTitle = sanitizeName(path.basename(importResult.relPath, path.extname(importResult.relPath)));
   const normalizedMeta = {
     title: String(meta.title || fallbackTitle).trim(),
     artist: String(meta.artist || "").trim(),
     year: String(meta.year || "").trim(),
     medium: String(meta.medium || "").trim(),
+    gallery: String(meta.gallery || "").trim(),
     size: String(meta.size || "").trim(),
     tags: [],
   };
 
   const id = fileToId(importResult.relPath);
-  const db = await readDb();
+  const db = await readDb(archive);
   db.metadata[id] = normalizedMeta;
-  await writeDb(db);
+  await writeDb(archive, db);
   return { itemId: id, relPath: importResult.relPath };
-}
-
-function buildSlideMetadataLine(values) {
-  const artist = String(values.artist || "").trim() || "Unknown artist";
-  const title = String(values.title || "").trim() || "(title unknown)";
-  const year = String(values.year || "").trim();
-  const size = String(values.size || "").trim();
-  const medium = String(values.medium || "").trim();
-  const tail = [medium, size].filter(Boolean).join(", ");
-  const core = year ? `${artist}, ${title}, ${year}.` : `${artist}, ${title}.`;
-  return tail ? `${core} ${tail}.` : core;
 }
 
 function buildCaptionParts(values) {
@@ -631,6 +808,17 @@ async function readImageForPdf(absPath) {
   }
 }
 
+async function convertImageToJpegBytes(absPath) {
+  const tempName = `pdf_fallback_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
+  const tempPath = path.join(DATA_DIR, tempName);
+  try {
+    await execFileAsync("sips", ["-s", "format", "jpeg", absPath, "--out", tempPath]);
+    return await fs.readFile(tempPath);
+  } finally {
+    fs.unlink(tempPath).catch(() => {});
+  }
+}
+
 async function generateSlideshowPdf(state, slideshowId) {
   let pdfLib;
   try {
@@ -649,7 +837,7 @@ async function generateSlideshowPdf(state, slideshowId) {
     throw new Error("No slides in slideshow.");
   }
 
-  const itemMap = new Map(state.items.map((item) => [item.id, item]));
+  const slideItemMap = state && typeof state.slideItems === "object" && state.slideItems ? state.slideItems : {};
   const pdf = await PDFDocument.create();
   const captionFont = await pdf.embedFont(StandardFonts.Helvetica);
   const captionItalicFont = await pdf.embedFont(StandardFonts.HelveticaOblique);
@@ -667,8 +855,10 @@ async function generateSlideshowPdf(state, slideshowId) {
   const black = rgb(0, 0, 0);
   const borderColor = rgb(0.07, 0.09, 0.16);
 
-  for (const slideId of slideshow.slides) {
-    const item = itemMap.get(slideId);
+  for (const slideRef of slideshow.slides) {
+    const refArchive = parseArchiveKey(slideRef.archive);
+    const refId = String(slideRef.id || "").trim();
+    const item = slideItemMap[`${refArchive}:${refId}`];
     if (!item) continue;
 
     const page = pdf.addPage([PDF_PAGE_WIDTH, PDF_PAGE_HEIGHT]);
@@ -699,12 +889,18 @@ async function generateSlideshowPdf(state, slideshowId) {
     let image = null;
     try {
       const relPath = idToFile(item.id);
-      const absPath = safeJoin(LIBRARY_DIR, relPath);
+      const itemArchive = getArchiveConfig(item.archive || refArchive);
+      const absPath = safeJoin(itemArchive.libraryDir, relPath);
       if (!absPath || !fss.existsSync(absPath)) {
         throw new Error("missing image");
       }
       const source = await readImageForPdf(absPath);
-      image = source.format === "png" ? await pdf.embedPng(source.bytes) : await pdf.embedJpg(source.bytes);
+      try {
+        image = source.format === "png" ? await pdf.embedPng(source.bytes) : await pdf.embedJpg(source.bytes);
+      } catch {
+        const fallbackBytes = await convertImageToJpegBytes(absPath);
+        image = await pdf.embedJpg(fallbackBytes);
+      }
     } catch {
       image = null;
     }
@@ -792,29 +988,43 @@ async function generateSlideshowPdf(state, slideshowId) {
 
 function normalizeDb(parsed) {
   const metadata = parsed && typeof parsed.metadata === "object" && parsed.metadata ? parsed.metadata : {};
+  return { metadata };
+}
 
-  // Backward compatibility: migrate { slides: [] } into the new slideshows model.
-  if (parsed && Array.isArray(parsed.slides)) {
-    return {
-      metadata,
-      slideshows: {
-        default: {
-          name: "Current Slideshow",
-          slides: parsed.slides.map(String),
-        },
-      },
-      currentSlideshowId: "default",
-    };
+async function readDb(archive) {
+  try {
+    const raw = await fs.readFile(archive.dbFile, "utf8");
+    return normalizeDb(JSON.parse(raw));
+  } catch {
+    return defaultDb();
   }
+}
 
+async function writeDb(archive, db) {
+  await fs.writeFile(archive.dbFile, JSON.stringify(db, null, 2));
+}
+
+function normalizeSlideRef(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const archive = parseArchiveKey(raw.archive);
+  const id = String(raw.id || "").trim();
+  if (!id) return null;
+  return { archive, id };
+}
+
+function normalizeSlidesDb(parsed) {
   const slideshows = parsed && typeof parsed.slideshows === "object" && parsed.slideshows ? parsed.slideshows : {};
   const normalizedShows = {};
 
   for (const [id, show] of Object.entries(slideshows)) {
     if (!show || typeof show !== "object") continue;
+    const slides = Array.isArray(show.slides)
+      ? show.slides.map(normalizeSlideRef).filter(Boolean)
+      : [];
+
     normalizedShows[id] = {
       name: String(show.name || "Untitled Slideshow").trim() || "Untitled Slideshow",
-      slides: Array.isArray(show.slides) ? show.slides.map(String) : [],
+      slides,
     };
   }
 
@@ -831,23 +1041,22 @@ function normalizeDb(parsed) {
   }
 
   return {
-    metadata,
     slideshows: normalizedShows,
     currentSlideshowId,
   };
 }
 
-async function readDb() {
+async function readSlidesDb() {
   try {
-    const raw = await fs.readFile(DB_FILE, "utf8");
-    return normalizeDb(JSON.parse(raw));
+    const raw = await fs.readFile(SLIDESHOWS_FILE, "utf8");
+    return normalizeSlidesDb(JSON.parse(raw));
   } catch {
-    return defaultDb();
+    return defaultSlidesDb();
   }
 }
 
-async function writeDb(db) {
-  await fs.writeFile(DB_FILE, JSON.stringify(db, null, 2));
+async function writeSlidesDb(db) {
+  await fs.writeFile(SLIDESHOWS_FILE, JSON.stringify(db, null, 2));
 }
 
 async function walkImages(dir, base = "") {
@@ -874,13 +1083,58 @@ async function walkImages(dir, base = "") {
   return files;
 }
 
-async function buildState() {
-  const db = await readDb();
-  const relFiles = await walkImages(LIBRARY_DIR);
+async function buildState(archive) {
+  const relFiles = await walkImages(archive.libraryDir);
+  const db = await readDb(archive);
+  const slidesDb = await readSlidesDb();
+  let dbChanged = false;
+
+  for (const relPath of relFiles) {
+    const id = fileToId(relPath);
+    if (!Object.prototype.hasOwnProperty.call(db.metadata, id)) {
+      db.metadata[id] = defaultMetadataRecord();
+      dbChanged = true;
+    }
+
+    if (archive.key === "excursions") {
+      const existing = normalizeMetadataPayload(db.metadata[id]);
+      const isBlank =
+        !existing.title
+        && !existing.artist
+        && !existing.year
+        && !existing.medium
+        && !existing.gallery
+        && !existing.size
+        && (!Array.isArray(existing.tags) || !existing.tags.length);
+      if (isBlank) {
+        const matched = await findFieldBundleMetadataForImage(relPath);
+        if (matched) {
+          db.metadata[id] = {
+            ...defaultMetadataRecord(),
+            ...matched,
+          };
+          dbChanged = true;
+        }
+      }
+    }
+  }
+
+  for (const id of Object.keys(db.metadata)) {
+    const relPath = idToFile(id);
+    const absPath = safeJoin(archive.libraryDir, relPath);
+    if (!relPath || !absPath || !fss.existsSync(absPath)) {
+      delete db.metadata[id];
+      dbChanged = true;
+    }
+  }
+
+  if (dbChanged) {
+    await writeDb(archive, db);
+  }
 
   const items = (await Promise.all(relFiles.map(async (relPath) => {
     try {
-      const absPath = path.join(LIBRARY_DIR, relPath);
+      const absPath = path.join(archive.libraryDir, relPath);
       const stat = await fs.stat(absPath);
       const id = fileToId(relPath);
       const meta = db.metadata[id] || {};
@@ -888,22 +1142,20 @@ async function buildState() {
       const title = hasStoredTitle
         ? String(meta.title || "").trim()
         : path.basename(relPath, path.extname(relPath));
-      const legacyGenre = String(meta.genre || "").trim();
       const tags = Array.isArray(meta.tags) ? meta.tags.map((t) => String(t).trim()).filter(Boolean) : [];
-      if (legacyGenre && !tags.some((t) => t.toLowerCase() === legacyGenre.toLowerCase())) {
-        tags.push(legacyGenre);
-      }
-      const thumbUrl = await getThumbnailUrl(absPath, relPath, stat.mtimeMs);
+      const thumbUrl = await getThumbnailUrl(archive, absPath, relPath, stat.mtimeMs);
 
       return {
         id,
+        archive: archive.key,
         relPath,
-        url: `/library/${encodeURIComponent(relPath).replaceAll("%2F", "/")}`,
+        url: `/library/${archive.key}/${encodeURIComponent(relPath).replaceAll("%2F", "/")}`,
         thumbUrl,
         title,
         artist: String(meta.artist || "").trim(),
         year: String(meta.year || "").trim(),
         medium: String(meta.medium || "").trim(),
+        gallery: String(meta.gallery || "").trim(),
         size: String(meta.size || "").trim(),
         tags,
         sourceName: relPath,
@@ -913,19 +1165,98 @@ async function buildState() {
       return null;
     }
   }))).filter(Boolean);
+  const byArchive = {
+    [archive.key]: new Map(items.map((item) => [item.id, item])),
+  };
 
-  const knownIds = new Set(items.map((i) => i.id));
-  const slideshows = Object.entries(db.slideshows).map(([id, show]) => ({
-    id,
-    name: show.name,
-    slides: show.slides.filter((itemId) => knownIds.has(itemId)),
-  }));
+  const neededArchives = new Set();
+  for (const show of Object.values(slidesDb.slideshows)) {
+    for (const ref of show.slides) {
+      if (ref.archive !== archive.key) neededArchives.add(ref.archive);
+    }
+  }
+
+  for (const key of neededArchives) {
+    const other = getArchiveConfig(key);
+    const otherDb = await readDb(other);
+    const otherFiles = await walkImages(other.libraryDir);
+    const otherItems = (await Promise.all(otherFiles.map(async (relPath) => {
+      try {
+        const absPath = path.join(other.libraryDir, relPath);
+        const stat = await fs.stat(absPath);
+        const id = fileToId(relPath);
+        const meta = otherDb.metadata[id] || {};
+        const hasStoredTitle = Object.prototype.hasOwnProperty.call(meta, "title");
+        const title = hasStoredTitle
+          ? String(meta.title || "").trim()
+          : path.basename(relPath, path.extname(relPath));
+        const tags = Array.isArray(meta.tags) ? meta.tags.map((t) => String(t).trim()).filter(Boolean) : [];
+        const thumbUrl = await getThumbnailUrl(other, absPath, relPath, stat.mtimeMs);
+
+        return {
+          id,
+          relPath,
+          url: `/library/${other.key}/${encodeURIComponent(relPath).replaceAll("%2F", "/")}`,
+          thumbUrl,
+          title,
+          artist: String(meta.artist || "").trim(),
+          year: String(meta.year || "").trim(),
+          medium: String(meta.medium || "").trim(),
+          gallery: String(meta.gallery || "").trim(),
+          size: String(meta.size || "").trim(),
+          tags,
+          sourceName: relPath,
+          mtimeMs: stat.mtimeMs,
+          archive: other.key,
+        };
+      } catch {
+        return null;
+      }
+    }))).filter(Boolean);
+    byArchive[other.key] = new Map(otherItems.map((item) => [item.id, item]));
+  }
+
+  const slideshows = [];
+  const slideItems = {};
+  for (const [id, show] of Object.entries(slidesDb.slideshows)) {
+    const normalizedSlides = [];
+    for (const ref of show.slides) {
+      const item = byArchive[ref.archive]?.get(ref.id);
+      if (!item) continue;
+      normalizedSlides.push(ref);
+      const key = `${ref.archive}:${ref.id}`;
+      if (!slideItems[key]) {
+        slideItems[key] = {
+          archive: ref.archive,
+          id: ref.id,
+          title: item.title,
+          artist: item.artist,
+          year: item.year,
+          medium: item.medium,
+          gallery: item.gallery,
+          size: item.size,
+          tags: item.tags || [],
+          url: item.url,
+          thumbUrl: item.thumbUrl,
+          sourceName: item.sourceName,
+        };
+      }
+    }
+    slideshows.push({
+      id,
+      name: show.name,
+      slides: normalizedSlides,
+    });
+  }
 
   return {
+    activeArchive: archive.key,
+    archives: Object.values(ARCHIVES).map((entry) => ({ key: entry.key, label: entry.label })),
     items,
+    slideItems,
     slideshows,
-    currentSlideshowId: db.currentSlideshowId,
-    libraryPath: LIBRARY_DIR,
+    currentSlideshowId: slidesDb.currentSlideshowId,
+    libraryPath: archive.libraryDir,
   };
 }
 
@@ -985,8 +1316,10 @@ function serveStaticFile(res, absPath, cacheControl = "no-store") {
 }
 
 async function handleApi(req, res, url) {
+  const archive = getArchiveConfig(url.searchParams.get("archive"));
+
   if (url.pathname === "/api/state" && req.method === "GET") {
-    const state = await buildState();
+    const state = await buildState(archive);
     sendJson(res, 200, state);
     return true;
   }
@@ -996,7 +1329,7 @@ async function handleApi(req, res, url) {
     const id = decodeURIComponent(encoded);
     const body = await parseBody(req);
     const metadataOverride = body && typeof body.metadata === "object" ? body.metadata : null;
-    const result = await purgeItemFromArchiveById(id, metadataOverride);
+    const result = await purgeItemFromArchiveById(archive, id, metadataOverride);
     sendJson(res, 200, { ok: true, ...result });
     return true;
   }
@@ -1004,27 +1337,28 @@ async function handleApi(req, res, url) {
   if (url.pathname.startsWith("/api/items/") && req.method === "POST") {
     const id = decodeURIComponent(url.pathname.slice("/api/items/".length));
     const relPath = idToFile(id);
-    const safePath = safeJoin(LIBRARY_DIR, relPath);
+    const safePath = safeJoin(archive.libraryDir, relPath);
     if (!relPath || !safePath || !fss.existsSync(safePath)) {
       sendJson(res, 404, { error: "Item not found" });
       return true;
     }
 
     const body = await parseBody(req);
-    const db = await readDb();
+    const db = await readDb(archive);
 
     db.metadata[id] = {
       title: String(body.title || "").trim(),
       artist: String(body.artist || "").trim(),
       year: String(body.year || "").trim(),
       medium: String(body.medium || "").trim(),
+      gallery: String(body.gallery || "").trim(),
       size: String(body.size || "").trim(),
       tags: Array.isArray(body.tags)
         ? body.tags.map((t) => String(t).trim()).filter(Boolean)
         : [],
     };
 
-    await writeDb(db);
+    await writeDb(archive, db);
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -1038,23 +1372,7 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === "/api/import-url/import" && req.method === "POST") {
     const body = await parseBody(req);
-    const result = await importSelectedImageFromCandidate(body);
-    sendJson(res, 200, { ok: true, ...result });
-    return true;
-  }
-
-  // Backward compatibility for older clients: import first candidate directly.
-  if (url.pathname === "/api/import-url" && req.method === "POST") {
-    const body = await parseBody(req);
-    const listed = await listImportCandidatesFromUrl(body.url);
-    if (!listed.candidates.length) {
-      sendJson(res, 400, { error: "Could not find an image URL on that page" });
-      return true;
-    }
-    const result = await importSelectedImageFromCandidate({
-      imageUrl: listed.candidates[0].url,
-      metadata: listed.metadata,
-    });
+    const result = await importSelectedImageFromCandidate(archive, body);
     sendJson(res, 200, { ok: true, ...result });
     return true;
   }
@@ -1062,13 +1380,13 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/slideshows" && req.method === "POST") {
     const body = await parseBody(req);
     const name = String(body.name || "").trim() || "Untitled Slideshow";
-    const db = await readDb();
+    const db = await readSlidesDb();
     const id = makeSlideshowId();
 
     db.slideshows[id] = { name, slides: [] };
     db.currentSlideshowId = id;
 
-    await writeDb(db);
+    await writeSlidesDb(db);
     sendJson(res, 200, { ok: true, id });
     return true;
   }
@@ -1076,7 +1394,7 @@ async function handleApi(req, res, url) {
   if (url.pathname === "/api/slideshows/current" && req.method === "POST") {
     const body = await parseBody(req);
     const id = String(body.id || "").trim();
-    const db = await readDb();
+    const db = await readSlidesDb();
 
     if (!db.slideshows[id]) {
       sendJson(res, 404, { error: "Slideshow not found" });
@@ -1084,7 +1402,7 @@ async function handleApi(req, res, url) {
     }
 
     db.currentSlideshowId = id;
-    await writeDb(db);
+    await writeSlidesDb(db);
     sendJson(res, 200, { ok: true });
     return true;
   }
@@ -1092,7 +1410,7 @@ async function handleApi(req, res, url) {
   if (url.pathname.startsWith("/api/slideshows/") && req.method === "POST") {
     const rest = decodeURIComponent(url.pathname.slice("/api/slideshows/".length));
     const [id, action] = rest.split("/");
-    const db = await readDb();
+    const db = await readSlidesDb();
     const slideshow = db.slideshows[id];
 
     if (!slideshow) {
@@ -1103,6 +1421,7 @@ async function handleApi(req, res, url) {
     if (action === "items") {
       const body = await parseBody(req);
       const itemId = String(body.itemId || "").trim();
+      const itemArchive = parseArchiveKey(body.archive);
       const selected = Boolean(body.selected);
 
       if (!itemId) {
@@ -1110,18 +1429,18 @@ async function handleApi(req, res, url) {
         return true;
       }
 
-      const next = slideshow.slides.filter((idValue) => idValue !== itemId);
-      if (selected) next.push(itemId);
+      const next = slideshow.slides.filter((slideRef) => !(slideRef.id === itemId && slideRef.archive === itemArchive));
+      if (selected) next.push({ archive: itemArchive, id: itemId });
       slideshow.slides = next;
-      await writeDb(db);
+      await writeSlidesDb(db);
       sendJson(res, 200, { ok: true });
       return true;
     }
 
     if (action === "order") {
       const body = await parseBody(req);
-      slideshow.slides = Array.isArray(body.slides) ? body.slides.map(String) : [];
-      await writeDb(db);
+      slideshow.slides = Array.isArray(body.slides) ? body.slides.map(normalizeSlideRef).filter(Boolean) : [];
+      await writeSlidesDb(db);
       sendJson(res, 200, { ok: true });
       return true;
     }
@@ -1130,7 +1449,7 @@ async function handleApi(req, res, url) {
       const body = await parseBody(req);
       const name = String(body.name || "").trim() || "Untitled Slideshow";
       slideshow.name = name;
-      await writeDb(db);
+      await writeSlidesDb(db);
       sendJson(res, 200, { ok: true });
       return true;
     }
@@ -1147,7 +1466,7 @@ async function handleApi(req, res, url) {
       if (!db.slideshows[db.currentSlideshowId]) {
         db.currentSlideshowId = remainingIds[0];
       }
-      await writeDb(db);
+      await writeSlidesDb(db);
       sendJson(res, 200, { ok: true, currentSlideshowId: db.currentSlideshowId });
       return true;
     }
@@ -1157,7 +1476,7 @@ async function handleApi(req, res, url) {
     const rest = decodeURIComponent(url.pathname.slice("/api/slideshows/".length));
     const [id, action] = rest.split("/");
     if (action === "pdf") {
-      const state = await buildState();
+      const state = await buildState(archive);
       const pdfBytes = await generateSlideshowPdf(state, id);
       const show = state.slideshows.find((slideshow) => slideshow.id === id);
       const disposition = url.searchParams.get("disposition") === "inline" ? "inline" : "attachment";
@@ -1168,20 +1487,6 @@ async function handleApi(req, res, url) {
       });
       return true;
     }
-  }
-
-  // Backward compatibility endpoint for old clients.
-  if (url.pathname === "/api/slides" && req.method === "POST") {
-    const body = await parseBody(req);
-    const ids = Array.isArray(body.slides) ? body.slides.map(String) : [];
-    const db = await readDb();
-    const current = db.slideshows[db.currentSlideshowId];
-    if (current) {
-      current.slides = ids;
-      await writeDb(db);
-    }
-    sendJson(res, 200, { ok: true });
-    return true;
   }
 
   return false;
@@ -1206,8 +1511,11 @@ async function handler(req, res) {
   }
 
   if (url.pathname.startsWith("/library/")) {
-    const rel = decodeURIComponent(url.pathname.slice("/library/".length));
-    const abs = safeJoin(LIBRARY_DIR, rel);
+    const relWithArchive = decodeURIComponent(url.pathname.slice("/library/".length));
+    const [archiveKey, ...parts] = relWithArchive.split("/");
+    const archive = getArchiveConfig(archiveKey);
+    const rel = parts.join("/");
+    const abs = safeJoin(archive.libraryDir, rel);
     if (!abs || !fss.existsSync(abs)) {
       sendText(res, 404, "Not found");
       return;
@@ -1217,8 +1525,11 @@ async function handler(req, res) {
   }
 
   if (url.pathname.startsWith("/thumbs/")) {
-    const rel = decodeURIComponent(url.pathname.slice("/thumbs/".length));
-    const abs = safeJoin(THUMBS_DIR, rel);
+    const relWithArchive = decodeURIComponent(url.pathname.slice("/thumbs/".length));
+    const [archiveKey, ...parts] = relWithArchive.split("/");
+    const archive = getArchiveConfig(archiveKey);
+    const rel = parts.join("/");
+    const abs = safeJoin(archive.thumbsDir, rel);
     if (!abs || !fss.existsSync(abs)) {
       sendText(res, 404, "Not found");
       return;
@@ -1249,6 +1560,8 @@ async function handler(req, res) {
     // eslint-disable-next-line no-console
     console.log(`Slide Library running at http://${HOST}:${PORT}`);
     // eslint-disable-next-line no-console
-    console.log(`Library folder: ${LIBRARY_DIR}`);
+    console.log(`Slide library folder: ${ARCHIVES.slide_library.libraryDir}`);
+    // eslint-disable-next-line no-console
+    console.log(`Excursions folder: ${ARCHIVES.excursions.libraryDir}`);
   });
 })();

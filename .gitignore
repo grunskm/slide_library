@@ -1,10 +1,16 @@
 node_modules/
 
-library/
-purged/
+data/library/
+data/excursions_library/
+data/purged/
+data/excursions_purged/
+data/field_bundle_archive/
 data/thumbs/
 data/archive.json
+data/excursions_archive.json
 data/purged_archive.json
+data/excursions_purged_archive.json
+data/slideshows.json
 
 .DS_Store
 *.log

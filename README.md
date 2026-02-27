@@ -9,11 +9,12 @@ Lightweight local app for course slides:
 
 ## Folder-based workflow
 
-Your designated image folder is:
-- `/Users/grunskm/slide_archive/library`
+Your designated image folders are:
+- `/Users/grunskm/slide_archive/data/library`
+- `/Users/grunskm/slide_archive/data/excursions_library`
 
 Workflow:
-1. Drag/copy image files into `/Users/grunskm/slide_archive/library` (subfolders are supported).
+1. Drag/copy image files into either designated folder (subfolders are supported).
 2. Start the app server.
 3. The library is loaded automatically when the app opens.
 4. Use `Search/Filters` in the header to show/hide the left search panel when needed.
@@ -40,10 +41,21 @@ Then open:
 
 ## Data storage
 
-- Image files stay on disk in `/Users/grunskm/slide_archive/library`.
-- Metadata and all slideshow data are stored in `/Users/grunskm/slide_archive/data/archive.json`.
+- Image files stay on disk in:
+  - `/Users/grunskm/slide_archive/data/library`
+  - `/Users/grunskm/slide_archive/data/excursions_library`
+- Metadata is stored per archive in:
+  - `/Users/grunskm/slide_archive/data/archive.json`
+  - `/Users/grunskm/slide_archive/data/excursions_archive.json`
+- Global slideshow structure is stored in:
+  - `/Users/grunskm/slide_archive/data/slideshows.json`
 - Cached preview thumbnails are generated in `/Users/grunskm/slide_archive/data/thumbs` as new images are detected.
-- Purged files are moved to `/Users/grunskm/slide_archive/purged`, with purge metadata logged in `/Users/grunskm/slide_archive/data/purged_archive.json`.
+- Purged files are moved to:
+  - `/Users/grunskm/slide_archive/data/purged`
+  - `/Users/grunskm/slide_archive/data/excursions_purged`
+- Purge metadata is logged in:
+  - `/Users/grunskm/slide_archive/data/purged_archive.json`
+  - `/Users/grunskm/slide_archive/data/excursions_purged_archive.json`
 
 ## Notes
 

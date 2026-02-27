@@ -14,7 +14,7 @@
             <div class="panel-header">
               <div class="library-title">
                 <button id="btn-toggle-sidebar" class="title-caret" aria-label="Toggle filters" aria-expanded="false">▸</button>
-                <h2>Slide Library</h2>
+                <button id="archive-title" class="archive-title-btn" aria-label="Switch archive">Slide Library</button>
               </div>
               <div class="header-actions">
                 <label class="size-control">
@@ -48,9 +48,15 @@
                   </select>
                 </label>
 
-                <label class="field">
+                <label class="field slide-only">
                   <select id="filter-medium">
                     <option value="">Medium</option>
+                  </select>
+                </label>
+
+                <label class="field excursions-only">
+                  <select id="filter-gallery">
+                    <option value="">Gallery</option>
                   </select>
                 </label>
 
@@ -67,6 +73,7 @@
                     <option value="year">Year</option>
                     <option value="tags">Tag</option>
                     <option value="medium">Medium</option>
+                    <option value="gallery">Gallery</option>
                     <option value="sourceName">Filename</option>
                   </select>
                 </label>
@@ -151,6 +158,11 @@
               <input id="medium" list="medium-suggestions" />
             </label>
 
+            <label class="field excursions-only">
+              <span>Gallery</span>
+              <input id="gallery" list="gallery-suggestions" />
+            </label>
+
             <label class="field">
               <span>Size (optional)</span>
               <input id="size" list="size-suggestions" placeholder="e.g. 73.7 x 92.1 cm" />
@@ -210,6 +222,7 @@
     <datalist id="artist-suggestions"></datalist>
     <datalist id="year-suggestions"></datalist>
     <datalist id="medium-suggestions"></datalist>
+    <datalist id="gallery-suggestions"></datalist>
     <datalist id="size-suggestions"></datalist>
     <datalist id="tag-suggestions-list"></datalist>
 

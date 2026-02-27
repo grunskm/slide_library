@@ -149,6 +149,21 @@ h2, h3 {
   font-size: 15px;
 }
 
+.archive-title-btn {
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+}
+
+.archive-title-btn:hover {
+  color: #1d4ed8;
+}
+
 .library-title {
   display: inline-flex;
   align-items: center;
@@ -227,6 +242,14 @@ h2, h3 {
   margin-bottom: 6px;
   width: 100%;
   min-width: 0;
+}
+
+body[data-archive="slide_library"] .excursions-only {
+  display: none;
+}
+
+body[data-archive="excursions"] .slide-only {
+  display: none;
 }
 
 .archive-filters input,

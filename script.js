@@ -1,7 +1,10 @@
 const state = {
   items: [],
+  slideItems: {},
   slideshows: [],
   currentSlideshowId: "",
+  activeArchive: "slide_library",
+  archives: [],
   libraryPath: "",
   sidebarOpen: false,
   dragSlideIndex: -1,
@@ -21,6 +24,7 @@ const state = {
     year: "",
     artist: "",
     medium: "",
+    gallery: "",
     tag: "",
     sortBy: "title",
     sortDir: "asc",
@@ -43,11 +47,13 @@ const dom = {
   filterYear: document.getElementById("filter-year"),
   filterArtist: document.getElementById("filter-artist"),
   filterMedium: document.getElementById("filter-medium"),
+  filterGallery: document.getElementById("filter-gallery"),
   filterTag: document.getElementById("filter-tag"),
   sortBy: document.getElementById("sort-by"),
   sortDir: document.getElementById("sort-dir"),
   clearFilters: document.getElementById("clear-filters"),
   btnToggleSidebar: document.getElementById("btn-toggle-sidebar"),
+  archiveTitle: document.getElementById("archive-title"),
   btnPreview: document.getElementById("btn-preview"),
   btnPdf: document.getElementById("btn-pdf"),
   dialog: document.getElementById("image-dialog"),
@@ -58,6 +64,7 @@ const dom = {
   artistSuggestions: document.getElementById("artist-suggestions"),
   yearSuggestions: document.getElementById("year-suggestions"),
   mediumSuggestions: document.getElementById("medium-suggestions"),
+  gallerySuggestions: document.getElementById("gallery-suggestions"),
   sizeSuggestions: document.getElementById("size-suggestions"),
   tagSuggestionsList: document.getElementById("tag-suggestions-list"),
   tagSuggestions: document.getElementById("tag-suggestions"),
@@ -67,6 +74,7 @@ const dom = {
   artist: document.getElementById("artist"),
   year: document.getElementById("year"),
   medium: document.getElementById("medium"),
+  gallery: document.getElementById("gallery"),
   size: document.getElementById("size"),
   tags: document.getElementById("tags"),
   editorImage: document.getElementById("editor-image"),
@@ -105,18 +113,87 @@ function getItemById(id) {
   return state.items.find((item) => item.id === id);
 }
 
+function makeSlideRef(archive, id) {
+  return { archive: String(archive || ""), id: String(id || "") };
+}
+
+function slideRefKey(ref) {
+  if (!ref || typeof ref !== "object") return "";
+  const archive = String(ref.archive || "").trim();
+  const id = String(ref.id || "").trim();
+  if (!archive || !id) return "";
+  return `${archive}:${id}`;
+}
+
+function slideRefEquals(a, b) {
+  return slideRefKey(a) && slideRefKey(a) === slideRefKey(b);
+}
+
+function getSlideshowItem(ref) {
+  const key = slideRefKey(ref);
+  if (!key) return null;
+  return state.slideItems[key] || null;
+}
+
 function displayArtistName(value) {
   const clean = String(value || "").trim();
   return clean || "Unknown artist";
 }
 
 function hasActiveArchiveFilters() {
-  return Boolean(state.filters.search || state.filters.year || state.filters.artist || state.filters.medium || state.filters.tag);
+  return Boolean(
+    state.filters.search
+      || state.filters.year
+      || state.filters.artist
+      || state.filters.medium
+      || state.filters.gallery
+      || state.filters.tag
+  );
 }
 
 function shouldRerenderArchiveAfterMetadataSave() {
   if (hasActiveArchiveFilters()) return true;
-  return ["title", "artist", "year", "medium", "tags"].includes(state.filters.sortBy);
+  return ["title", "artist", "year", "medium", "gallery", "tags"].includes(state.filters.sortBy);
+}
+
+function isExcursionsArchive() {
+  return state.activeArchive === "excursions";
+}
+
+function archiveLabelByKey(key) {
+  const match = state.archives.find((archive) => archive.key === key);
+  if (match) return match.label;
+  return key === "excursions" ? "Excursions" : "Slide Library";
+}
+
+function updateArchiveUi() {
+  document.body.dataset.archive = state.activeArchive;
+  if (dom.archiveTitle) {
+    dom.archiveTitle.textContent = archiveLabelByKey(state.activeArchive);
+  }
+  if (dom.sortBy) {
+    const mediumOption = dom.sortBy.querySelector("option[value='medium']");
+    const galleryOption = dom.sortBy.querySelector("option[value='gallery']");
+    if (mediumOption) mediumOption.disabled = isExcursionsArchive();
+    if (galleryOption) galleryOption.disabled = !isExcursionsArchive();
+  }
+
+  if (isExcursionsArchive()) {
+    if (state.filters.medium) state.filters.medium = "";
+    if (state.filters.sortBy === "medium") state.filters.sortBy = "title";
+  } else {
+    if (state.filters.gallery) state.filters.gallery = "";
+    if (state.filters.sortBy === "gallery") state.filters.sortBy = "title";
+  }
+}
+
+function nextArchiveKey() {
+  if (!state.archives.length) {
+    return state.activeArchive === "slide_library" ? "excursions" : "slide_library";
+  }
+  const idx = state.archives.findIndex((archive) => archive.key === state.activeArchive);
+  if (idx < 0) return state.archives[0].key;
+  return state.archives[(idx + 1) % state.archives.length].key;
 }
 
 function uniqueNonEmpty(values) {
@@ -143,6 +220,7 @@ function renderEditorSuggestions() {
   setDatalistOptions(dom.artistSuggestions, byField("artist"), 250);
   setDatalistOptions(dom.yearSuggestions, byField("year"), 120);
   setDatalistOptions(dom.mediumSuggestions, byField("medium"), 250);
+  setDatalistOptions(dom.gallerySuggestions, byField("gallery"), 250);
   setDatalistOptions(dom.sizeSuggestions, byField("size"), 250);
   setDatalistOptions(dom.tagSuggestionsList, getTagVocabulary(), 400);
 }
@@ -211,7 +289,8 @@ function getCurrentSlideshow() {
 }
 
 function getCurrentSlides() {
-  return getCurrentSlideshow()?.slides || [];
+  const slides = getCurrentSlideshow()?.slides;
+  return Array.isArray(slides) ? slides : [];
 }
 
 function setCurrentSlides(nextSlides) {
@@ -221,7 +300,7 @@ function setCurrentSlides(nextSlides) {
 }
 
 function isInCurrentSlideshow(id) {
-  return getCurrentSlides().includes(id);
+  return getCurrentSlides().some((ref) => ref.archive === state.activeArchive && ref.id === id);
 }
 
 function getCurrentEditorId() {
@@ -285,18 +364,6 @@ function applySplitWidth(value) {
 function updateEditorHeadline() {
   const title = String(dom.title.value || "").trim();
   dom.dialogTitle.textContent = title || "(title unknown)";
-}
-
-function buildSlideMetadataLines(values) {
-  const artist = String(values.artist || "").trim() || "Unknown artist";
-  const title = String(values.title || "").trim() || "(title unknown)";
-  const year = String(values.year || "").trim();
-  const size = String(values.size || "").trim();
-  const medium = String(values.medium || "").trim();
-  const tail = [medium, size].filter(Boolean).join(", ");
-  const core = year ? `${artist}, ${title}, ${year}.` : `${artist}, ${title}.`;
-
-  return tail ? `${core} ${tail}.` : core;
 }
 
 function buildSlideMetadataHtml(values) {
@@ -372,6 +439,7 @@ function fillEditor(item) {
   dom.artist.value = item.artist || "";
   dom.year.value = item.year || "";
   dom.medium.value = item.medium || "";
+  dom.gallery.value = item.gallery || "";
   dom.size.value = item.size || "";
   state.editorTags = uniqueNonEmpty(item.tags || []);
   dom.tags.value = "";
@@ -443,7 +511,13 @@ async function closeEditorWithSave() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const withArchive = (() => {
+    if (!path.startsWith("/api/")) return path;
+    const glue = path.includes("?") ? "&" : "?";
+    return `${path}${glue}archive=${encodeURIComponent(state.activeArchive)}`;
+  })();
+
+  const response = await fetch(withArchive, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -463,12 +537,16 @@ async function api(path, options = {}) {
 async function loadState() {
   const payload = await api("/api/state", { method: "GET" });
   state.items = Array.isArray(payload.items) ? payload.items : [];
+  state.slideItems = payload && typeof payload.slideItems === "object" && payload.slideItems ? payload.slideItems : {};
   state.slideshows = Array.isArray(payload.slideshows) ? payload.slideshows : [];
+  state.archives = Array.isArray(payload.archives) ? payload.archives : [];
+  state.activeArchive = String(payload.activeArchive || state.activeArchive || "slide_library");
   state.currentSlideshowId = String(payload.currentSlideshowId || "");
   if (!state.currentSlideshowId && state.slideshows.length) {
     state.currentSlideshowId = state.slideshows[0].id;
   }
   state.libraryPath = String(payload.libraryPath || "");
+  updateArchiveUi();
 }
 
 function filteredItems() {
@@ -488,13 +566,14 @@ function filteredItems() {
 }
 
 function itemMatchesFilters(item, ignoreKey = "") {
-  const { search, year, artist, medium, tag } = state.filters;
+  const { search, year, artist, medium, gallery, tag } = state.filters;
 
   const blob = [
     item.title,
     item.artist,
     item.year,
     item.medium,
+    item.gallery,
     item.size,
     item.sourceName,
     ...(item.tags || []),
@@ -506,6 +585,7 @@ function itemMatchesFilters(item, ignoreKey = "") {
   if (ignoreKey !== "year" && !yearInSelectedRange(item.year, year)) return false;
   if (ignoreKey !== "artist" && artist && norm(item.artist) !== norm(artist)) return false;
   if (ignoreKey !== "medium" && medium && norm(item.medium) !== norm(medium)) return false;
+  if (ignoreKey !== "gallery" && gallery && norm(item.gallery) !== norm(gallery)) return false;
   if (ignoreKey !== "tag" && tag) {
     const hasTag = (item.tags || []).some((t) => norm(t) === norm(tag));
     if (!hasTag) return false;
@@ -565,10 +645,12 @@ function fillFacetSelect(selectEl, values, currentValue, anyLabel) {
 function renderFacetOptions() {
   const artistPool = state.items.filter((item) => itemMatchesFilters(item, "artist"));
   const mediumPool = state.items.filter((item) => itemMatchesFilters(item, "medium"));
+  const galleryPool = state.items.filter((item) => itemMatchesFilters(item, "gallery"));
   const tagPool = state.items.filter((item) => itemMatchesFilters(item, "tag"));
 
   const artistValues = uniqueSortedValues(artistPool, "artist");
   const mediumValues = uniqueSortedValues(mediumPool, "medium");
+  const galleryValues = uniqueSortedValues(galleryPool, "gallery");
   const tagValues = uniqueNonEmpty(tagPool.flatMap((item) => item.tags || [])).sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: "base" })
   );
@@ -576,7 +658,9 @@ function renderFacetOptions() {
   dom.filterYear.value = state.filters.year || "";
   fillFacetSelect(dom.filterArtist, artistValues, state.filters.artist, "Artist");
   fillFacetSelect(dom.filterMedium, mediumValues, state.filters.medium, "Medium");
+  fillFacetSelect(dom.filterGallery, galleryValues, state.filters.gallery, "Gallery");
   fillFacetSelect(dom.filterTag, tagValues, state.filters.tag, "Tag");
+  dom.sortBy.value = state.filters.sortBy || "title";
 }
 
 function renderArchive() {
@@ -663,14 +747,21 @@ function renderSlides() {
   }
 
   dom.slidesList.innerHTML = slides
-    .map((id, idx) => {
-      const item = getItemById(id);
+    .map((ref, idx) => {
+      const item = getSlideshowItem(ref);
       if (!item) return "";
       const displayTitle = String(item.title || "").trim() || "(title unknown)";
 
       return `
       <li class="slide-item" draggable="true" data-slide-index="${idx}">
-        <img class="preview preview-click" src="${escapeHtml(item.thumbUrl || item.url)}" alt="${escapeHtml(displayTitle)}" data-action="edit" data-id="${item.id}" />
+        <img
+          class="preview preview-click"
+          src="${escapeHtml(item.thumbUrl || item.url)}"
+          alt="${escapeHtml(displayTitle)}"
+          data-action="edit"
+          data-id="${item.id}"
+          data-archive="${item.archive || ref.archive}"
+        />
         <div>
           <div class="title">${idx + 1}. ${escapeHtml(displayTitle)}</div>
           <div class="meta">${escapeHtml(displayArtistName(item.artist))}</div>
@@ -696,6 +787,7 @@ function collectEditorPayload() {
     artist: dom.artist.value.trim(),
     year: dom.year.value.trim(),
     medium: dom.medium.value.trim(),
+    gallery: dom.gallery.value.trim(),
     size: dom.size.value.trim(),
     tags: [...state.editorTags],
   };
@@ -707,6 +799,7 @@ function payloadsEqual(a, b) {
   if (a.artist !== b.artist) return false;
   if (a.year !== b.year) return false;
   if (a.medium !== b.medium) return false;
+  if (a.gallery !== b.gallery) return false;
   if (a.size !== b.size) return false;
   const tagsA = Array.isArray(a.tags) ? a.tags : [];
   const tagsB = Array.isArray(b.tags) ? b.tags : [];
@@ -738,8 +831,23 @@ async function saveCurrentMetadata(options = {}) {
     item.artist = payload.artist;
     item.year = payload.year;
     item.medium = payload.medium;
+    item.gallery = payload.gallery;
     item.size = payload.size;
     item.tags = payload.tags;
+
+    const key = `${state.activeArchive}:${id}`;
+    if (state.slideItems[key]) {
+      state.slideItems[key] = {
+        ...state.slideItems[key],
+        title: payload.title,
+        artist: payload.artist,
+        year: payload.year,
+        medium: payload.medium,
+        gallery: payload.gallery,
+        size: payload.size,
+        tags: payload.tags,
+      };
+    }
   }
   state.editorBaselinePayload = { ...payload, tags: [...payload.tags] };
 
@@ -774,15 +882,38 @@ async function saveCurrentSlideshowOrder(slides) {
 async function toggleItemInCurrentSlideshow(itemId, selected) {
   const show = getCurrentSlideshow();
   if (!show) return;
+  const ref = makeSlideRef(state.activeArchive, itemId);
 
   await api(`/api/slideshows/${encodeURIComponent(show.id)}/items`, {
     method: "POST",
-    body: JSON.stringify({ itemId, selected }),
+    body: JSON.stringify({ itemId, archive: ref.archive, selected }),
   });
 
-  const next = show.slides.filter((id) => id !== itemId);
-  if (selected) next.push(itemId);
+  const next = show.slides.filter((slideRef) => !slideRefEquals(slideRef, ref));
+  if (selected) next.push(ref);
   show.slides = next;
+
+  // Keep slideshow rendering in sync without waiting for a full state refresh.
+  if (selected) {
+    const item = getItemById(itemId);
+    if (item) {
+      const key = `${ref.archive}:${ref.id}`;
+      state.slideItems[key] = {
+        archive: ref.archive,
+        id: ref.id,
+        title: item.title || "",
+        artist: item.artist || "",
+        year: item.year || "",
+        medium: item.medium || "",
+        gallery: item.gallery || "",
+        size: item.size || "",
+        tags: Array.isArray(item.tags) ? [...item.tags] : [],
+        url: item.url || "",
+        thumbUrl: item.thumbUrl || "",
+        sourceName: item.sourceName || "",
+      };
+    }
+  }
 }
 
 async function setCurrentSlideshow(id) {
@@ -870,7 +1001,9 @@ function openPdfExport(download = false) {
   }
 
   const disposition = download ? "attachment" : "inline";
-  const url = `/api/slideshows/${encodeURIComponent(show.id)}/pdf?disposition=${disposition}&_=${Date.now()}`;
+  const url = `/api/slideshows/${encodeURIComponent(show.id)}/pdf?disposition=${disposition}&archive=${encodeURIComponent(
+    state.activeArchive
+  )}&_=${Date.now()}`;
 
   if (download) {
     const link = document.createElement("a");
@@ -1266,6 +1399,11 @@ function attachEvents() {
     render();
   });
 
+  dom.filterGallery.addEventListener("change", (e) => {
+    state.filters.gallery = e.target.value;
+    render();
+  });
+
   dom.filterTag.addEventListener("change", (e) => {
     state.filters.tag = e.target.value;
     render();
@@ -1286,6 +1424,7 @@ function attachEvents() {
     state.filters.year = "";
     state.filters.artist = "";
     state.filters.medium = "";
+    state.filters.gallery = "";
     state.filters.tag = "";
     dom.search.value = "";
     render();
@@ -1293,6 +1432,13 @@ function attachEvents() {
 
   dom.btnToggleSidebar.addEventListener("click", () => {
     toggleSidebar();
+  });
+
+  dom.archiveTitle.addEventListener("click", () => {
+    state.activeArchive = nextArchiveKey();
+    refreshFromDisk().catch((err) => {
+      alert(`Could not switch archive: ${err.message}`);
+    });
   });
 
   dom.archiveSize.addEventListener("input", (event) => {
@@ -1419,7 +1565,21 @@ function attachEvents() {
 
     const action = target.dataset.action;
     if (action === "edit") {
-      openEditor(target.dataset.id, getCurrentSlides());
+      const itemId = target.dataset.id;
+      const itemArchive = String(target.dataset.archive || state.activeArchive);
+      const sequenceIds = getCurrentSlides()
+        .filter((ref) => ref.archive === itemArchive)
+        .map((ref) => ref.id);
+
+      if (itemArchive === state.activeArchive) {
+        openEditor(itemId, sequenceIds);
+        return;
+      }
+
+      state.activeArchive = itemArchive;
+      refreshFromDisk()
+        .then(() => openEditor(itemId, sequenceIds))
+        .catch((err) => alert(`Could not switch archive: ${err.message}`));
       return;
     }
 

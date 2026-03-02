@@ -14,6 +14,7 @@ const FIELD_BUNDLE_DIR = path.join(DATA_DIR, "field_bundle_archive");
 const DB_FILE = path.join(DATA_DIR, "archive.json");
 const PURGED_DB_FILE = path.join(DATA_DIR, "purged_archive.json");
 const SLIDESHOWS_FILE = path.join(DATA_DIR, "slideshows.json");
+const PDF_REPLACED_DIR = path.join(DATA_DIR, "pdf_replaced_originals");
 const THUMB_MAX_EDGE = 360;
 const execFileAsync = promisify(execFile);
 const thumbnailJobs = new Map();
@@ -86,6 +87,7 @@ function defaultPurgedDb() {
 
 async function ensureDirs() {
   await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(PDF_REPLACED_DIR, { recursive: true });
 
   for (const archive of Object.values(ARCHIVES)) {
     await fs.mkdir(archive.libraryDir, { recursive: true });
@@ -819,6 +821,36 @@ async function convertImageToJpegBytes(absPath) {
   }
 }
 
+async function convertImageToPngBytes(absPath) {
+  const tempName = `pdf_fallback_${Date.now()}_${Math.random().toString(36).slice(2)}.png`;
+  const tempPath = path.join(DATA_DIR, tempName);
+  try {
+    await execFileAsync("sips", ["-s", "format", "png", absPath, "--out", tempPath]);
+    return await fs.readFile(tempPath);
+  } finally {
+    fs.unlink(tempPath).catch(() => {});
+  }
+}
+
+function canReplaceInPlaceWithFormat(relPath, format) {
+  const ext = path.extname(relPath).toLowerCase();
+  if (format === "jpg") return ext === ".jpg" || ext === ".jpeg";
+  if (format === "png") return ext === ".png";
+  return false;
+}
+
+async function replaceOriginalAfterPdfFallback(archive, relPath, absSourcePath, bytes) {
+  const backupRoot = path.join(PDF_REPLACED_DIR, archive.key);
+  await fs.mkdir(backupRoot, { recursive: true });
+  const backupRel = uniqueRelPathInDir(backupRoot, relPath);
+  const backupAbs = safeJoin(backupRoot, backupRel);
+  if (!backupAbs) return;
+
+  await fs.mkdir(path.dirname(backupAbs), { recursive: true });
+  await moveFileSafely(absSourcePath, backupAbs);
+  await fs.writeFile(absSourcePath, bytes);
+}
+
 async function generateSlideshowPdf(state, slideshowId) {
   let pdfLib;
   try {
@@ -898,8 +930,17 @@ async function generateSlideshowPdf(state, slideshowId) {
       try {
         image = source.format === "png" ? await pdf.embedPng(source.bytes) : await pdf.embedJpg(source.bytes);
       } catch {
-        const fallbackBytes = await convertImageToJpegBytes(absPath);
-        image = await pdf.embedJpg(fallbackBytes);
+        const fallbackFormat = path.extname(relPath).toLowerCase() === ".png" ? "png" : "jpg";
+        const fallbackBytes = fallbackFormat === "png"
+          ? await convertImageToPngBytes(absPath)
+          : await convertImageToJpegBytes(absPath);
+        image = fallbackFormat === "png"
+          ? await pdf.embedPng(fallbackBytes)
+          : await pdf.embedJpg(fallbackBytes);
+
+        if (canReplaceInPlaceWithFormat(relPath, fallbackFormat)) {
+          await replaceOriginalAfterPdfFallback(itemArchive, relPath, absPath, fallbackBytes);
+        }
       }
     } catch {
       image = null;
